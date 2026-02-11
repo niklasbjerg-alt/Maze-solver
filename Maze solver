@@ -1,0 +1,153 @@
+#include <Wire.h>
+#include <Zumo32U4.h>
+
+Zumo32U4LineSensors lineSensors;
+Zumo32U4Motors motors;
+
+// Color references
+// table = dark/black floor; wall = light/white wall
+int left_tableRef = 560;  // Color reference
+int left_wallRef = 180;   // Color reference
+
+int mid_tableRef = 560;  // Color reference
+int mid_wallRef = 180;   // Color reference
+
+int right_tableRef = 560;  // Color reference
+int right_wallRef = 180;   // Color reference
+
+// Speeds
+int forwardSpeed = 170;      // straight drive speed
+int smallForwardSpeed = 20;  // speed for turning
+int turnSpeed = 100;         // speed while turning
+int turnStepDelay = 15;  // turn delay, how long it turns at a time
+
+uint16_t lineSensorValues[3];  // we are useing 3 of the 5 sensors, far left middel and far right
+
+// --- helpers ---
+enum FollowSide { FOLLOW_UNKNOWN = 0,
+                  FOLLOW_LEFT = 1,
+                  FOLLOW_RIGHT = 2 };  // Makes our driving side decision into readable text
+FollowSide followSide = FOLLOW_UNKNOWN;
+
+// compares if the calibrated wall or table values are closer to the detected value
+bool isWall(uint16_t val, int tableRef, int wallRef) {
+  return abs((int)val - wallRef) < abs((int)val - tableRef);  // returns true or false. if true then the value seen is closest to wall
+}
+
+// function that finds entry to maze
+void driveStraightUntilWall() {
+  while (true) {
+    lineSensors.read(lineSensorValues, QTR_EMITTERS_ON);
+    bool midIsWall = isWall(lineSensorValues[1], mid_tableRef, mid_wallRef);  // until the middle sensor findes the maze, then the code starts
+
+    if (midIsWall) {
+      motors.setSpeeds(0, 0);  // stop at the wall
+      delay(100);
+      return;  // ends code
+    }
+    motors.setSpeeds(forwardSpeed, forwardSpeed);  // drives forward until wall i found
+    delay(5);
+  }
+}
+
+void setup() {
+  lineSensors.initThreeSensors();
+}
+
+void loop() {
+  if (followSide == FOLLOW_UNKNOWN) {  // since a side haven't been chosen
+    driveStraightUntilWall();          // run the function to find the maze
+
+    // Decide side based on which side sensor
+    lineSensors.read(lineSensorValues, QTR_EMITTERS_ON);                            // reads the linesensors
+    bool leftIsWall = isWall(lineSensorValues[0], left_tableRef, left_wallRef);     // sees which one is closer
+    bool rightIsWall = isWall(lineSensorValues[2], right_tableRef, right_wallRef);  // sees which one is closer
+
+    if (leftIsWall && !rightIsWall) followSide = FOLLOW_LEFT;        // If it finds the left wall and not the right it follows the left wall
+    else if (rightIsWall && !leftIsWall) followSide = FOLLOW_RIGHT;  // If it finds the right wakk and not the left it follows the right wall
+    else if (leftIsWall && rightIsWall) followSide = FOLLOW_LEFT;    // tie-breaker it follows the left wall
+    return;                                                          // next loop tick will run the follower
+  }
+
+  //Reads sensors, and finds the values for left mid and right
+  lineSensors.read(lineSensorValues, QTR_EMITTERS_ON);
+  uint16_t leftVal = lineSensorValues[0];  // uint means it is a positiv number only
+  uint16_t midVal = lineSensorValues[1];
+  uint16_t rightVal = lineSensorValues[2];
+
+  bool leftIsWall = isWall(leftVal, left_tableRef, left_wallRef);  // sees which one is closer of the walls
+  bool midIsWall = isWall(midVal, mid_tableRef, mid_wallRef);
+  bool rightIsWall = isWall(rightVal, right_tableRef, right_wallRef);
+
+  // if we follow right wall
+  if (followSide == FOLLOW_RIGHT) {
+    //this part of the code is turning cornors
+    if (midIsWall && !rightIsWall) {                                                   // if mid is wall and right is not wall
+      motors.setSpeeds(smallForwardSpeed + turnSpeed, smallForwardSpeed - turnSpeed);  // sets the motorspeed the two motors to opesite turn spped and a slower pace
+      delay(turnStepDelay);                                                            // have a delay for turingen so we can read sensors agian
+
+      lineSensors.read(lineSensorValues, QTR_EMITTERS_ON);  // reads sensors agian, and gives a sensor value
+      midIsWall = isWall(lineSensorValues[1], mid_tableRef, mid_wallRef);
+      rightIsWall = isWall(lineSensorValues[2], right_tableRef, right_wallRef);
+      if (!midIsWall && rightIsWall) {                 // if mid is not wall and right is wall
+        motors.setSpeeds(forwardSpeed, forwardSpeed);  // set motors to go stright because it is on a stright line
+      }
+      return;
+    }
+
+
+    if (!midIsWall && rightIsWall) { // same as before, but it was local and this can run anytime
+      motors.setSpeeds(forwardSpeed, forwardSpeed);
+      return;
+    }
+
+    if (!midIsWall && !rightIsWall) { // is wall is lost
+      motors.setSpeeds(smallForwardSpeed + turnSpeed, smallForwardSpeed - turnSpeed); // the robot turns untill it finds a wall agian
+      delay(turnStepDelay); // with a small delay
+      return;
+    }
+
+    if (midIsWall && rightIsWall) { // if it is on a wall
+      motors.setSpeeds(smallForwardSpeed - turnSpeed, smallForwardSpeed + turnSpeed); // it turn the other way to get the middel sensor of the wall to see tabel
+      delay(turnStepDelay); // with a small delay
+      return;
+    }
+
+    // ensure the motor stands still in the delays then the sensors are trying to find a wall agian
+    motors.setSpeeds(0, 0);
+    return;
+  }
+
+// same code from before but with inverted, for the left side
+  if (midIsWall && !leftIsWall) {
+    motors.setSpeeds(smallForwardSpeed - turnSpeed, smallForwardSpeed + turnSpeed);
+    delay(turnStepDelay);
+
+    lineSensors.read(lineSensorValues, QTR_EMITTERS_ON);
+    midIsWall = isWall(lineSensorValues[1], mid_tableRef, mid_wallRef);
+    leftIsWall = isWall(lineSensorValues[0], left_tableRef, left_wallRef);
+    if (!midIsWall && leftIsWall) {
+      motors.setSpeeds(forwardSpeed, forwardSpeed);
+    }
+    return;
+  }
+
+  if (!midIsWall && leftIsWall) {
+    motors.setSpeeds(forwardSpeed, forwardSpeed);
+    return;
+  }
+
+  if (!midIsWall && !leftIsWall) {
+    motors.setSpeeds(smallForwardSpeed - turnSpeed, smallForwardSpeed + turnSpeed);
+    delay(turnStepDelay);
+    return;
+  }
+
+  if (midIsWall && leftIsWall) {
+    motors.setSpeeds(smallForwardSpeed + turnSpeed, smallForwardSpeed - turnSpeed);
+    delay(turnStepDelay);
+    return;
+  }
+
+  motors.setSpeeds(0, 0);
+}
